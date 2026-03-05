@@ -1,20 +1,20 @@
 """
-clickbait_classifier.py
------------------------
-Clickbait detection using 26 interpretable features + XGBoost with SMOTE
-resampling and threshold optimization.
+clickbait_lightgbm.py
+---------------------
+Clickbait detection using 22 text-only interpretable features + LightGBM with
+is_unbalance class balancing and threshold optimization.
 
 Features:
-  Group A (5): Original dataset features (media, captions, description, keywords, hour)
-  Group B (6): Text statistics (word counts, punctuation, caps ratio)
-  Group C (5): VADER sentiment (post, article, gap, abs gap, intensity)
-  Group D (3): Semantic mismatch (cosine similarity, KL divergence, Jaccard)
-  Group E (7): Clickbait linguistic patterns (trigger phrases, numbers, demonstratives, etc.)
-  Total: 26 features
+  Group A (6): Text statistics (word counts, punctuation, caps ratio)
+  Group B (3): VADER sentiment (post, article, abs gap)
+  Group C (3): Semantic mismatch (cosine similarity, KL divergence, Jaccard)
+  Group D (6): Clickbait linguistic patterns (data-driven n-grams, numbers, demonstratives, etc.)
+  Group E (4): Article metadata text features (title similarity, description similarity, keyword overlap)
+  Total: 22 features
 
 Usage (Colab):
     1. Upload this script and final_cleaned_full.csv to Colab
-    2. pip install sentence-transformers scikit-learn vaderSentiment xgboost imbalanced-learn
+    2. pip install sentence-transformers scikit-learn vaderSentiment lightgbm
     3. Set runtime to GPU (optional but faster for SBERT encoding)
     4. Paste this entire script into a cell and run
 """
@@ -31,50 +31,30 @@ from tqdm import tqdm
 # CONFIG
 # ===========================================================================
 INPUT_FILE = "final_cleaned_full.csv"
-OUTPUT_FILE = "clickbait_predictions.csv"
+OUTPUT_FILE = "clickbait_predictions_lightgbm.csv"
 SBERT_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 BATCH_SIZE = 128
 TEST_SIZE = 0.20
 RANDOM_STATE = 42
+TOP_K_NGRAMS = 100  # number of most discriminative n-grams to select via chi-squared
 
 # Feature names for reference
 FEATURE_NAMES = [
-    # Group A: Original dataset features
-    "has_media", "num_captions", "has_description", "num_keywords", "post_hour",
-    # Group B: Text statistics
+    # Group A: Text statistics
     "post_word_count", "article_word_count", "word_count_ratio",
     "post_question_marks", "post_exclamation_marks", "post_caps_ratio",
-    # Group C: VADER sentiment
-    "post_sentiment", "article_sentiment", "sentiment_gap",
-    "abs_sentiment_gap", "post_sentiment_intensity",
-    # Group D: Semantic mismatch
+    # Group B: VADER sentiment
+    "post_sentiment", "article_sentiment", "abs_sentiment_gap",
+    # Group C: Semantic mismatch
     "cosine_similarity", "kl_divergence", "jaccard_similarity",
-    # Group E: Clickbait linguistic patterns
-    "trigger_phrase_count", "has_number", "starts_with_demonstrative",
-    "second_person_count", "post_char_length", "avg_word_length",
-    "ellipsis_count",
+    # Group D: Clickbait linguistic patterns
+    "clickbait_ngram_count", "has_number", "starts_with_demonstrative",
+    "second_person_count", "avg_word_length", "ellipsis_count",
+    # Group E: Article metadata text features
+    "title_post_cosine_sim", "title_post_jaccard",
+    "desc_post_cosine_sim", "keyword_overlap_ratio",
 ]
 
-# Clickbait trigger phrases for Group E feature
-TRIGGER_PHRASES = [
-    "you won't believe", "you will not believe",
-    "what happened next", "what happens next",
-    "shocking", "jaw-dropping", "jaw dropping",
-    "mind-blowing", "mind blowing",
-    "can't stop laughing", "dying to know",
-    "this is why", "here's why", "here is why",
-    "the reason is", "the truth about",
-    "secret", "tricks", "hacks",
-    "amazing", "incredible", "unbelievable",
-    "goes wrong", "gone wrong",
-    "you need to", "you have to",
-    "don't want you to know", "they don't want",
-    "will make you", "will blow your mind",
-    "changed my life", "change your life",
-    "number \\d+ will", "#\\d+ will",
-    "won't believe what", "guess what",
-    "omg", "wtf", "lol",
-]
 
 # ---------------------------------------------------------------------------
 # Text parsing  (reused from generate_bart_summaries.py)
@@ -100,37 +80,6 @@ def parse_text_list(raw_str):
     return raw_str if raw_str else ""
 
 
-def parse_list_count(raw_str):
-    """Parse a string-encoded Python list and return the count of non-empty items."""
-    if pd.isna(raw_str) or not str(raw_str).strip():
-        return 0
-    raw_str = str(raw_str).strip()
-    try:
-        parsed = ast.literal_eval(raw_str)
-        if isinstance(parsed, list):
-            return len([item for item in parsed if str(item).strip()])
-        return 1 if str(parsed).strip() else 0
-    except (ValueError, SyntaxError):
-        return 0
-
-
-def parse_has_items(raw_str):
-    """Parse a string-encoded Python list and return 1 if it has any non-empty items, else 0."""
-    return 1 if parse_list_count(raw_str) > 0 else 0
-
-
-def parse_hour(timestamp_str):
-    """Extract hour of day from postTimestamp string like 'Tue Jun 09 16:31:10 +0000 2015'."""
-    if pd.isna(timestamp_str) or not str(timestamp_str).strip():
-        return 12  # default to noon
-    try:
-        from datetime import datetime
-        dt = datetime.strptime(str(timestamp_str).strip(), "%a %b %d %H:%M:%S %z %Y")
-        return dt.hour
-    except (ValueError, TypeError):
-        return 12
-
-
 # ---------------------------------------------------------------------------
 # 1. Data loading & preprocessing
 # ---------------------------------------------------------------------------
@@ -143,9 +92,12 @@ def load_and_clean(input_path):
     df = pd.read_csv(input_path, encoding="latin-1")
     print(f"   Loaded {len(df)} rows, {len(df.columns)} columns")
 
-    print("   Parsing postText and targetParagraphs...")
+    print("   Parsing text columns...")
     df["postText_clean"] = df["postText"].apply(parse_text_list)
     df["targetParagraphs_clean"] = df["targetParagraphs"].apply(parse_text_list)
+    df["targetTitle_clean"] = df["targetTitle"].apply(parse_text_list)
+    df["targetDescription_clean"] = df["targetDescription"].apply(parse_text_list)
+    df["targetKeywords_clean"] = df["targetKeywords"].apply(parse_text_list)
 
     before = len(df)
     df = df[
@@ -155,6 +107,14 @@ def load_and_clean(input_path):
     print(f"   Dropped {before - len(df)} rows with empty text")
     print(f"   Remaining: {len(df)} rows")
 
+    # Report coverage of new text columns
+    n_title = (df["targetTitle_clean"].str.strip() != "").sum()
+    n_desc = (df["targetDescription_clean"].str.strip() != "").sum()
+    n_kw = (df["targetKeywords_clean"].str.strip() != "").sum()
+    print(f"   targetTitle coverage:       {n_title}/{len(df)} ({100*n_title/len(df):.1f}%)")
+    print(f"   targetDescription coverage: {n_desc}/{len(df)} ({100*n_desc/len(df):.1f}%)")
+    print(f"   targetKeywords coverage:    {n_kw}/{len(df)} ({100*n_kw/len(df):.1f}%)")
+
     print(f"   Class distribution:")
     print(f"   {df['truthClass'].value_counts().to_dict()}")
 
@@ -162,11 +122,11 @@ def load_and_clean(input_path):
 
 
 # ---------------------------------------------------------------------------
-# 2. SBERT encoding (kept for cosine similarity feature)
+# 2. SBERT encoding
 # ---------------------------------------------------------------------------
 
 def encode_texts(df):
-    """Encode postText and targetParagraphs with SBERT."""
+    """Encode postText, targetParagraphs, targetTitle, and targetDescription with SBERT."""
     import torch
     from sentence_transformers import SentenceTransformer
 
@@ -180,7 +140,7 @@ def encode_texts(df):
 
     model = SentenceTransformer(SBERT_MODEL, device=device)
 
-    print(f"   Encoding postText ({len(df)} texts, batch_size={BATCH_SIZE})...")
+    print(f"   Encoding postText ({len(df)} texts)...")
     emb_post = model.encode(
         df["postText_clean"].tolist(),
         batch_size=BATCH_SIZE,
@@ -188,7 +148,7 @@ def encode_texts(df):
         convert_to_numpy=True,
     )
 
-    print(f"   Encoding targetParagraphs ({len(df)} texts, batch_size={BATCH_SIZE})...")
+    print(f"   Encoding targetParagraphs ({len(df)} texts)...")
     emb_article = model.encode(
         df["targetParagraphs_clean"].tolist(),
         batch_size=BATCH_SIZE,
@@ -196,50 +156,63 @@ def encode_texts(df):
         convert_to_numpy=True,
     )
 
+    # Encode targetTitle (fill empty with placeholder to avoid SBERT issues)
+    titles = df["targetTitle_clean"].tolist()
+    titles = [t if t.strip() else "no title" for t in titles]
+    print(f"   Encoding targetTitle ({len(df)} texts)...")
+    emb_title = model.encode(
+        titles,
+        batch_size=BATCH_SIZE,
+        show_progress_bar=True,
+        convert_to_numpy=True,
+    )
+
+    # Encode targetDescription (fill empty with placeholder)
+    descs = df["targetDescription_clean"].tolist()
+    descs = [d if d.strip() else "no description" for d in descs]
+    print(f"   Encoding targetDescription ({len(df)} texts)...")
+    emb_desc = model.encode(
+        descs,
+        batch_size=BATCH_SIZE,
+        show_progress_bar=True,
+        convert_to_numpy=True,
+    )
+
     print(f"   Embedding shape: {emb_post.shape}")
-    return emb_post, emb_article
+    return emb_post, emb_article, emb_title, emb_desc
 
 
 # ---------------------------------------------------------------------------
-# 3. Feature engineering (26 interpretable features)
+# 3. Feature engineering (22 text-only features)
+#    NOTE: train_idx and y_train are required so that the chi-squared n-gram
+#    selection is fit ONLY on training data (prevents data leakage).
 # ---------------------------------------------------------------------------
 
-def build_features(df, emb_post, emb_article):
-    """Build 26 interpretable features across 5 groups.
+def build_features(df, emb_post, emb_article, emb_title, emb_desc, train_idx, y_train):
+    """Build 22 text-only interpretable features across 5 groups.
 
-    Group A: Original dataset features (5)
-    Group B: Text statistics (6)
-    Group C: VADER sentiment (5)
-    Group D: Semantic mismatch (3)
-    Group E: Clickbait linguistic patterns (7)
+    Group A: Text statistics (6)
+    Group B: VADER sentiment (3)
+    Group C: Semantic mismatch (3)
+    Group D: Clickbait linguistic patterns (6) — n-grams are data-driven
+    Group E: Article metadata text features (4)
     """
     from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
-    from sklearn.feature_extraction.text import TfidfVectorizer
+    from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
+    from sklearn.feature_selection import chi2
 
     print("\n" + "=" * 70)
-    print("3. FEATURE ENGINEERING (26 features)")
+    print("3. FEATURE ENGINEERING (22 text-only features)")
     print("=" * 70)
 
     features = pd.DataFrame(index=df.index)
-
-    # -----------------------------------------------------------------------
-    # Group A: Original dataset features (5)
-    # -----------------------------------------------------------------------
-    print("   Group A: Original dataset features...")
-    features["has_media"] = df["postMedia"].apply(parse_has_items)
-    features["num_captions"] = df["targetCaptions"].apply(parse_list_count)
-    features["has_description"] = df["targetDescription"].apply(
-        lambda x: 0 if pd.isna(x) or not str(x).strip() else 1
-    )
-    features["num_keywords"] = df["targetKeywords"].apply(parse_list_count)
-    features["post_hour"] = df["postTimestamp"].apply(parse_hour)
-
-    # -----------------------------------------------------------------------
-    # Group B: Text statistics (6)
-    # -----------------------------------------------------------------------
-    print("   Group B: Text statistics...")
     post_texts = df["postText_clean"]
     article_texts = df["targetParagraphs_clean"]
+
+    # -----------------------------------------------------------------------
+    # Group A: Text statistics (6)
+    # -----------------------------------------------------------------------
+    print("   Group A: Text statistics...")
 
     features["post_word_count"] = post_texts.apply(lambda x: len(x.split()))
     features["article_word_count"] = article_texts.apply(lambda x: len(x.split()))
@@ -253,9 +226,9 @@ def build_features(df, emb_post, emb_article):
     )
 
     # -----------------------------------------------------------------------
-    # Group C: VADER sentiment (5)
+    # Group B: VADER sentiment (3)
     # -----------------------------------------------------------------------
-    print("   Group C: VADER sentiment analysis...")
+    print("   Group B: VADER sentiment analysis...")
     analyzer = SentimentIntensityAnalyzer()
 
     post_sentiments = post_texts.apply(lambda x: analyzer.polarity_scores(x)["compound"])
@@ -263,22 +236,20 @@ def build_features(df, emb_post, emb_article):
 
     features["post_sentiment"] = post_sentiments
     features["article_sentiment"] = article_sentiments
-    features["sentiment_gap"] = post_sentiments - article_sentiments
     features["abs_sentiment_gap"] = (post_sentiments - article_sentiments).abs()
-    features["post_sentiment_intensity"] = post_sentiments.abs()
 
     # -----------------------------------------------------------------------
-    # Group D: Semantic mismatch (3)
+    # Group C: Semantic mismatch (3)
     # -----------------------------------------------------------------------
-    print("   Group D: Semantic mismatch features...")
+    print("   Group C: Semantic mismatch features...")
 
-    # D1: Cosine similarity from SBERT embeddings
+    # C1: Cosine similarity from SBERT embeddings (post vs article body)
     dot = np.sum(emb_post * emb_article, axis=1)
     norm_post = np.linalg.norm(emb_post, axis=1)
     norm_article = np.linalg.norm(emb_article, axis=1)
     features["cosine_similarity"] = dot / (norm_post * norm_article + 1e-8)
 
-    # D2: KL divergence between TF-IDF distributions
+    # C2: KL divergence between TF-IDF distributions
     print("   Computing KL divergence (TF-IDF)...")
     all_texts = pd.concat([post_texts, article_texts]).tolist()
     tfidf = TfidfVectorizer(max_features=5000, stop_words="english")
@@ -296,7 +267,7 @@ def build_features(df, emb_post, emb_article):
     kl_div = np.sum(p * np.log(p / q), axis=1)
     features["kl_divergence"] = kl_div
 
-    # D3: Jaccard similarity (word-level overlap)
+    # C3: Jaccard similarity (word-level overlap)
     print("   Computing Jaccard similarity...")
     jaccard_scores = []
     for pt, at in zip(post_texts, article_texts):
@@ -311,45 +282,116 @@ def build_features(df, emb_post, emb_article):
     features["jaccard_similarity"] = jaccard_scores
 
     # -----------------------------------------------------------------------
-    # Group E: Clickbait linguistic patterns (7)
+    # Group D: Clickbait linguistic patterns (6)
     # -----------------------------------------------------------------------
-    print("   Group E: Clickbait linguistic patterns...")
+    print("   Group D: Clickbait linguistic patterns...")
 
-    # E1: Trigger phrase count
-    trigger_pattern = re.compile("|".join(TRIGGER_PHRASES), re.IGNORECASE)
-    features["trigger_phrase_count"] = post_texts.apply(
-        lambda x: len(trigger_pattern.findall(x))
-    )
+    # D1: Data-driven clickbait n-gram count (chi-squared selection)
+    #     Fit CountVectorizer + chi2 on TRAINING data only to prevent leakage
+    print(f"   Selecting top {TOP_K_NGRAMS} discriminative n-grams (chi-squared on train only)...")
 
-    # E2: Has number (listicle signal)
+    cv = CountVectorizer(ngram_range=(1, 3), min_df=5, max_features=10000)
+    train_posts = post_texts.iloc[train_idx]
+    X_ngram_train = cv.fit_transform(train_posts)
+
+    chi2_scores, chi2_pvals = chi2(X_ngram_train, y_train)
+
+    top_k_idx = np.argsort(chi2_scores)[::-1][:TOP_K_NGRAMS]
+    vocab = cv.get_feature_names_out()
+
+    print(f"   Top 20 clickbait-discriminative n-grams:")
+    for i, idx in enumerate(top_k_idx[:20], 1):
+        print(f"     {i:2d}. '{vocab[idx]}'  (chi2 = {chi2_scores[idx]:.1f}, p = {chi2_pvals[idx]:.2e})")
+
+    # Transform ALL data with the fitted vectorizer, sum top-K columns
+    X_ngram_all = cv.transform(post_texts)
+    features["clickbait_ngram_count"] = np.array(
+        X_ngram_all[:, top_k_idx].sum(axis=1)
+    ).flatten()
+
+    # D2: Has number (listicle signal)
     features["has_number"] = post_texts.apply(
         lambda x: 1 if re.search(r"\d", x) else 0
     )
 
-    # E3: Starts with demonstrative pronoun
+    # D3: Starts with demonstrative pronoun
     demonstrative_pattern = re.compile(r"^\s*(this|these|here|that)\b", re.IGNORECASE)
     features["starts_with_demonstrative"] = post_texts.apply(
         lambda x: 1 if demonstrative_pattern.search(x) else 0
     )
 
-    # E4: Second person pronoun count
+    # D4: Second person pronoun count
     second_person_pattern = re.compile(r"\b(you|your|you're|yourself|yours)\b", re.IGNORECASE)
     features["second_person_count"] = post_texts.apply(
         lambda x: len(second_person_pattern.findall(x))
     )
 
-    # E5: Post character length
-    features["post_char_length"] = post_texts.apply(len)
-
-    # E6: Average word length
+    # D5: Average word length
     features["avg_word_length"] = post_texts.apply(
         lambda x: np.mean([len(w) for w in x.split()]) if x.split() else 0.0
     )
 
-    # E7: Ellipsis count (suspense punctuation)
+    # D6: Ellipsis count (suspense punctuation)
     features["ellipsis_count"] = post_texts.apply(
         lambda x: x.count("...")
     )
+
+    # -----------------------------------------------------------------------
+    # Group E: Article metadata text features (4)
+    #   Uses targetTitle, targetDescription, targetKeywords
+    # -----------------------------------------------------------------------
+    print("   Group E: Article metadata text features...")
+
+    title_texts = df["targetTitle_clean"]
+    desc_texts = df["targetDescription_clean"]
+    kw_texts = df["targetKeywords_clean"]
+
+    # E1: Cosine similarity between post and article title (SBERT)
+    dot_title = np.sum(emb_post * emb_title, axis=1)
+    norm_title = np.linalg.norm(emb_title, axis=1)
+    title_cos = dot_title / (norm_post * norm_title + 1e-8)
+    # Zero out where title was empty
+    empty_title = (title_texts.str.strip() == "").values
+    title_cos[empty_title] = 0.0
+    features["title_post_cosine_sim"] = title_cos
+
+    # E2: Jaccard similarity between post and article title (word-level)
+    title_jaccard = []
+    for pt, tt in zip(post_texts, title_texts):
+        pw = set(pt.lower().split())
+        tw = set(tt.lower().split())
+        if len(pw | tw) == 0:
+            title_jaccard.append(0.0)
+        else:
+            title_jaccard.append(len(pw & tw) / len(pw | tw))
+    features["title_post_jaccard"] = title_jaccard
+
+    # E3: Cosine similarity between post and article description (SBERT)
+    dot_desc = np.sum(emb_post * emb_desc, axis=1)
+    norm_desc = np.linalg.norm(emb_desc, axis=1)
+    desc_cos = dot_desc / (norm_post * norm_desc + 1e-8)
+    # Zero out where description was empty
+    empty_desc = (desc_texts.str.strip() == "").values
+    desc_cos[empty_desc] = 0.0
+    features["desc_post_cosine_sim"] = desc_cos
+
+    # E4: Keyword overlap ratio (fraction of article keywords found in post)
+    kw_overlap = []
+    for pt, kw in zip(post_texts, kw_texts):
+        kw_str = kw.strip()
+        if not kw_str:
+            kw_overlap.append(0.0)
+            continue
+        # Split keywords on commas or whitespace
+        keywords = set(re.split(r"[,\s]+", kw_str.lower()))
+        keywords.discard("")
+        if not keywords:
+            kw_overlap.append(0.0)
+            continue
+        post_lower = pt.lower()
+        matched = sum(1 for k in keywords if k in post_lower)
+        kw_overlap.append(matched / len(keywords))
+    features["keyword_overlap_ratio"] = kw_overlap
 
     # -----------------------------------------------------------------------
     # Summary
@@ -359,22 +401,22 @@ def build_features(df, emb_post, emb_article):
 
     # Per-feature correlation with truthClass
     print("\n   Feature correlations with truthClass:")
-    y = df["truthClass"]
+    y_all = df["truthClass"]
     for col in features.columns:
-        corr = features[col].corr(y)
+        corr = features[col].corr(y_all)
         print(f"     {col:30s}  r = {corr:+.4f}")
 
     return features
 
 
 # ---------------------------------------------------------------------------
-# 4-5. Train/test split, SMOTE, hyperparameter tuning & threshold optimization
+# 4-5. Class weighting, hyperparameter tuning & threshold optimization
 # ---------------------------------------------------------------------------
 
-def train_and_evaluate(features_df, y, df, emb_post, emb_article):
-    """Split data, apply SMOTE, tune XGBoost with RandomizedSearchCV,
+def train_and_evaluate(features_df, y, df, train_idx, test_idx):
+    """Scale, tune LightGBM with is_unbalance + RandomizedSearchCV,
     optimize decision threshold, evaluate, and save results."""
-    from xgboost import XGBClassifier
+    from lightgbm import LGBMClassifier
     from sklearn.metrics import (
         accuracy_score,
         classification_report,
@@ -382,70 +424,58 @@ def train_and_evaluate(features_df, y, df, emb_post, emb_article):
         precision_recall_curve,
         f1_score,
     )
-    from sklearn.model_selection import train_test_split, RandomizedSearchCV, StratifiedKFold
+    from sklearn.model_selection import RandomizedSearchCV, StratifiedKFold
     from sklearn.preprocessing import StandardScaler
-    from imblearn.over_sampling import SMOTE
 
-    # Combine 26 hand-crafted features with SBERT embeddings (384+384=768)
-    X_handcrafted = features_df.values
-    X = np.hstack([X_handcrafted, emb_post, emb_article])
-    n_handcrafted = X_handcrafted.shape[1]
-    n_total = X.shape[1]
-    print(f"   Combined features: {n_handcrafted} hand-crafted + {emb_post.shape[1]}d post emb "
-          f"+ {emb_article.shape[1]}d article emb = {n_total} total")
+    X = features_df.values
+    X_train, X_test = X[train_idx], X[test_idx]
+    y_train, y_test = y[train_idx], y[test_idx]
+    print(f"   Features: {X.shape[1]} text-only hand-crafted features")
 
-    # --- 4. Train/test split ---
+    # --- 4. Split summary ---
     print("\n" + "=" * 70)
     print("4. TRAIN/TEST SPLIT")
     print("=" * 70)
-
-    X_train, X_test, y_train, y_test, idx_train, idx_test = train_test_split(
-        X, y, np.arange(len(y)),
-        test_size=TEST_SIZE,
-        stratify=y,
-        random_state=RANDOM_STATE,
-    )
     print(f"   Train: {len(X_train)}  Test: {len(X_test)}")
     print(f"   Train class dist: {dict(zip(*np.unique(y_train, return_counts=True)))}")
     print(f"   Test  class dist: {dict(zip(*np.unique(y_test, return_counts=True)))}")
 
-    # --- 4b. SMOTE resampling on training data ---
+    # --- 4b. Scaling + class weight ---
     print("\n" + "=" * 70)
-    print("4b. SMOTE RESAMPLING")
+    print("4b. SCALING & CLASS WEIGHTING")
     print("=" * 70)
 
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
 
-    smote = SMOTE(random_state=RANDOM_STATE)
-    X_train_resampled, y_train_resampled = smote.fit_resample(X_train_scaled, y_train)
-
-    print(f"   Before SMOTE: {len(X_train_scaled)} samples")
-    print(f"   After  SMOTE: {len(X_train_resampled)} samples")
-    print(f"   Resampled class dist: {dict(zip(*np.unique(y_train_resampled, return_counts=True)))}")
+    n_neg = np.sum(y_train == 0)
+    n_pos = np.sum(y_train == 1)
+    imbalance_ratio = n_neg / n_pos
+    print(f"   Class imbalance ratio (neg/pos): {imbalance_ratio:.2f}")
+    print(f"   Using LightGBM is_unbalance=True (auto class weighting)")
 
     # --- 5. Hyperparameter tuning with RandomizedSearchCV ---
     print("\n" + "=" * 70)
-    print("5. HYPERPARAMETER TUNING (RandomizedSearchCV)")
+    print("5. HYPERPARAMETER TUNING — LightGBM (RandomizedSearchCV)")
     print("=" * 70)
 
     param_distributions = {
-        "n_estimators": [100, 200, 300, 500],
-        "learning_rate": [0.01, 0.05, 0.1, 0.2],
-        "max_depth": [3, 4, 5, 6, 8],
-        "min_child_weight": [1, 3, 5, 7],
+        "n_estimators": [100, 200, 300, 500, 700, 1000],
+        "learning_rate": [0.01, 0.03, 0.05, 0.1, 0.2],
+        "max_depth": [-1, 3, 5, 7, 10],
+        "num_leaves": [15, 31, 50, 80, 127],
+        "min_child_samples": [5, 10, 20, 30, 50],
         "subsample": [0.6, 0.7, 0.8, 0.9, 1.0],
         "colsample_bytree": [0.6, 0.7, 0.8, 0.9, 1.0],
-        "gamma": [0, 0.1, 0.2, 0.3],
-        "reg_alpha": [0, 0.01, 0.1, 1.0],
-        "reg_lambda": [0.5, 1.0, 1.5, 2.0],
+        "reg_alpha": [0, 0.01, 0.1, 0.5, 1.0],
+        "reg_lambda": [0, 0.01, 0.1, 0.5, 1.0],
     }
 
-    base_clf = XGBClassifier(
+    base_clf = LGBMClassifier(
+        is_unbalance=True,
         random_state=RANDOM_STATE,
-        eval_metric="logloss",
-        use_label_encoder=False,
+        verbose=-1,
     )
 
     cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=RANDOM_STATE)
@@ -453,7 +483,7 @@ def train_and_evaluate(features_df, y, df, emb_post, emb_article):
     search = RandomizedSearchCV(
         estimator=base_clf,
         param_distributions=param_distributions,
-        n_iter=50,
+        n_iter=100,
         scoring="f1",
         cv=cv,
         random_state=RANDOM_STATE,
@@ -461,8 +491,8 @@ def train_and_evaluate(features_df, y, df, emb_post, emb_article):
         verbose=1,
     )
 
-    print("   Running 50-iteration random search with 5-fold stratified CV...")
-    search.fit(X_train_resampled, y_train_resampled)
+    print("   Running 100-iteration random search with 5-fold stratified CV...")
+    search.fit(X_train_scaled, y_train)
 
     clf = search.best_estimator_
     print(f"\n   Best CV F1 score: {search.best_score_:.4f}")
@@ -471,23 +501,12 @@ def train_and_evaluate(features_df, y, df, emb_post, emb_article):
         print(f"     {param}: {val}")
 
     # --- Feature importance ---
-    print("\n   Feature Importance Ranking (top 30):")
+    print(f"\n   Feature Importance Ranking (all {len(FEATURE_NAMES)} features):")
     importances = clf.feature_importances_
 
-    # Build full feature name list: 26 named + embedding dimensions
-    all_feature_names = list(FEATURE_NAMES)
-    all_feature_names += [f"post_emb_{i}" for i in range(emb_post.shape[1])]
-    all_feature_names += [f"article_emb_{i}" for i in range(emb_article.shape[1])]
-
     importance_order = np.argsort(importances)[::-1]
-    for rank, idx in enumerate(importance_order[:30], 1):
-        print(f"     {rank:2d}. {all_feature_names[idx]:30s}  importance = {importances[idx]:.4f}")
-
-    # Summarize embedding vs hand-crafted importance
-    handcrafted_imp = importances[:n_handcrafted].sum()
-    embedding_imp = importances[n_handcrafted:].sum()
-    print(f"\n   Importance share: hand-crafted = {handcrafted_imp:.4f}, "
-          f"embeddings = {embedding_imp:.4f}")
+    for rank, idx in enumerate(importance_order, 1):
+        print(f"     {rank:2d}. {FEATURE_NAMES[idx]:30s}  importance = {importances[idx]}")
 
     # --- 6. Evaluation ---
     print("\n" + "=" * 70)
@@ -549,15 +568,15 @@ def train_and_evaluate(features_df, y, df, emb_post, emb_article):
     print(f"\n   Final Accuracy: {acc:.4f}")
 
     # --- Save output CSV ---
-    out = df.iloc[idx_test].copy()
+    out = df.iloc[test_idx].copy()
     out["predicted"] = y_pred
-    for i, fname in enumerate(FEATURE_NAMES):
-        out[fname] = features_df.iloc[idx_test][fname].values
+    for fname in FEATURE_NAMES:
+        out[fname] = features_df.iloc[test_idx][fname].values
     out.to_csv(OUTPUT_FILE, index=False)
     print(f"\n   Saved test predictions to {OUTPUT_FILE}")
     print(f"   Shape: {out.shape}")
 
-    return clf, y_test, y_pred, idx_test
+    return clf, y_test, y_pred, test_idx
 
 
 # ---------------------------------------------------------------------------
@@ -604,18 +623,28 @@ def print_verification(df, features_df, y_test, y_pred, idx_test):
 # RUN
 # ===========================================================================
 
+from sklearn.model_selection import train_test_split
+
 # 1. Load data
 df = load_and_clean(INPUT_FILE)
 
-# 2. SBERT encoding (for cosine similarity)
-emb_post, emb_article = encode_texts(df)
+# 2. SBERT encoding (for cosine similarity features)
+emb_post, emb_article, emb_title, emb_desc = encode_texts(df)
 
-# 3. Feature engineering (26 features)
-features_df = build_features(df, emb_post, emb_article)
-
-# 4-6. SMOTE + Tuned XGBoost + Threshold optimization
+# 3. Train/test split FIRST (before feature engineering to prevent n-gram leakage)
 y = df["truthClass"].values
-clf, y_test, y_pred, idx_test = train_and_evaluate(features_df, y, df, emb_post, emb_article)
+train_idx, test_idx = train_test_split(
+    np.arange(len(y)),
+    test_size=TEST_SIZE,
+    stratify=y,
+    random_state=RANDOM_STATE,
+)
+
+# 4. Feature engineering (22 text-only features, n-grams fit on train only)
+features_df = build_features(df, emb_post, emb_article, emb_title, emb_desc, train_idx, y[train_idx])
+
+# 5-6. Class-weighted LightGBM + Threshold optimization
+clf, y_test, y_pred, idx_test = train_and_evaluate(features_df, y, df, train_idx, test_idx)
 
 # 7. Verification
 print_verification(df, features_df, y_test, y_pred, idx_test)
