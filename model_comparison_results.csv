@@ -10,3 +10,4 @@ DistilBERT v1 (postText only),N/A,0.6967,0.8533,0.7215,0.6735,0.6237
 DistilBERT v2 (regression+title),N/A,0.7082,0.8378,0.6439,0.7869,0.3736
 DistilBERT v3 (filtered train),N/A,0.7014,0.8458,0.6803,0.7239,0.3352
 Ensemble (0.9*v2 + 0.1*LightGBM),N/A,0.7109,0.8412,0.6529,0.7801,0.3859
+DistilBERT v4 (reg+title+desc),N/A,0.7094,0.8492,0.6852,0.7354,0.4185
