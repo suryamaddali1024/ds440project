@@ -39,7 +39,7 @@ from sklearn.metrics import (
 # ===========================================================================
 INPUT_FILE = "final_cleaned_full.csv"
 OUTPUT_FILE = "clickbait_predictions_transformer.csv"
-MODEL_NAME = "distilbert-base-uncased"
+MODEL_NAME = "roberta-base"
 MAX_LENGTH = 64        # post titles are short, 64 tokens is plenty
 BATCH_SIZE = 16
 EPOCHS = 4
@@ -106,6 +106,7 @@ def load_and_split():
 
     df["postText_clean"] = df["postText"].apply(parse_text_list)
     df["targetParagraphs_clean"] = df["targetParagraphs"].apply(parse_text_list)
+    df["targetDescription_clean"] = df["targetDescription"].apply(parse_text_list)
 
     df = df[
         (df["postText_clean"].str.strip() != "")
@@ -114,7 +115,15 @@ def load_and_split():
     print(f"   After cleanup: {len(df)} rows")
     print(f"   Class distribution: {df['truthClass'].value_counts().to_dict()}")
 
-    texts = df["postText_clean"].tolist()
+    def combine_text(post, desc):
+        if not desc.strip():
+            return post
+        return post + " </s> " + desc   # RoBERTa separator
+
+    texts = [
+    combine_text(p, d)
+    for p, d in zip(df["postText_clean"], df["targetDescription_clean"])
+    ]
     labels = df["truthClass"].values
 
     # Same test split as clickbait_model_comparison.py
@@ -154,8 +163,8 @@ def load_and_split():
 # ===========================================================================
 
 def setup_model_and_tokenizer(train_labels):
-    """Load DistilBERT + tokenizer, compute class weights."""
-    from transformers import DistilBertTokenizer, DistilBertForSequenceClassification
+    from transformers import AutoTokenizer, AutoModelForSequenceClassification
+    
 
     print("\n" + "=" * 70)
     print("SECTION 2: MODEL SETUP")
@@ -165,8 +174,8 @@ def setup_model_and_tokenizer(train_labels):
     print(f"   Device: {device}")
     print(f"   Model: {MODEL_NAME}")
 
-    tokenizer = DistilBertTokenizer.from_pretrained(MODEL_NAME)
-    model = DistilBertForSequenceClassification.from_pretrained(
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+    model = AutoModelForSequenceClassification.from_pretrained(
         MODEL_NAME, num_labels=2,
     )
     model.to(device)
