@@ -1,0 +1,4 @@
+ablation,num_features,f1
+full_26,26,0.6147664490205926
+no_metadata,22,0.60790273556231
+no_error_features,22,0.6075819672131147

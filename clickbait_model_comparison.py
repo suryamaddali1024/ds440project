@@ -761,6 +761,111 @@ def save_outputs(results, best_model_name, features_df, df, test_idx, cross_entr
     print(f"   Shape: {out.shape}")
     print(f"   Columns: true_label, predicted, predicted_proba, cross_entropy_loss, + {len(FEATURE_NAMES)} features")
 
+# ===========================================================================
+# ABLATION STUDY
+# ===========================================================================
+
+FEATURE_GROUPS = {
+    "E_metadata": [
+        "title_post_cosine_sim", "title_post_jaccard",
+        "desc_post_cosine_sim", "keyword_overlap_ratio",
+    ],
+    "F_error_driven": [
+        "sensational_word_count", "post_sentiment_intensity",
+        "proper_noun_ratio", "forward_reference_count",
+    ],
+}
+
+ABLATION_SETS = {
+    "full_26": FEATURE_NAMES,
+    "no_metadata": [f for f in FEATURE_NAMES if f not in FEATURE_GROUPS["E_metadata"]],
+    "no_error_features": [f for f in FEATURE_NAMES if f not in FEATURE_GROUPS["F_error_driven"]],
+}
+
+def run_ablation(features_df, y, train_idx, test_idx):
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.metrics import f1_score
+    from sklearn.preprocessing import StandardScaler
+
+    print("\n" + "=" * 70)
+    print("ABLATION STUDY")
+    print("=" * 70)
+
+    ablation_results = []
+    y_array = np.array(y)
+
+    for name, feature_list in ABLATION_SETS.items():
+        print(f"\nAblation: {name}")
+
+        X = features_df[feature_list].values
+        X_train = X[train_idx]
+        X_test = X[test_idx]
+        y_train = y_array[train_idx]
+        y_test = y_array[test_idx]
+
+        scaler = StandardScaler()
+        X_train_scaled = scaler.fit_transform(X_train)
+        X_test_scaled = scaler.transform(X_test)
+
+        model = LogisticRegression(
+            max_iter=5000,
+            class_weight="balanced",
+            random_state=RANDOM_STATE,
+        )
+        model.fit(X_train_scaled, y_train)
+        preds = model.predict(X_test_scaled)
+
+        f1 = f1_score(y_test, preds)
+
+        print(f"   Features: {len(feature_list)}")
+        print(f"   F1: {f1:.4f}")
+
+        ablation_results.append({
+            "ablation": name,
+            "num_features": len(feature_list),
+            "f1": f1,
+        })
+
+    ablation_df = pd.DataFrame(ablation_results)
+    ablation_df.to_csv("ablation_results.csv", index=False)
+    print("\nSaved: ablation_results.csv")
+
+    return ablation_df
+
+
+# ===========================================================================
+# EXPORT ERROR TABLES
+# ===========================================================================
+
+def export_errors(model, X_test, y_test, test_idx, df):
+    probs = model.predict_proba(X_test)[:, 1]
+    preds = (probs >= 0.5).astype(int)
+
+    error_df = df.iloc[test_idx].copy()
+    error_df["prob"] = probs
+    error_df["pred"] = preds
+    error_df["true"] = np.array(y_test)
+
+    false_positives = error_df[
+        (error_df["pred"] == 1) & (error_df["true"] == 0)
+    ].sort_values("prob", ascending=False).head(20)
+
+    false_negatives = error_df[
+        (error_df["pred"] == 0) & (error_df["true"] == 1)
+    ].sort_values("prob", ascending=True).head(20)
+
+    boundary_cases = error_df.iloc[
+        np.argsort(np.abs(error_df["prob"] - 0.5))
+    ].head(20)
+
+    false_positives.to_csv("top_false_positives.csv", index=False)
+    false_negatives.to_csv("top_false_negatives.csv", index=False)
+    boundary_cases.to_csv("boundary_cases.csv", index=False)
+
+    print("   Saved: top_false_positives.csv")
+    print("   Saved: top_false_negatives.csv")
+    print("   Saved: boundary_cases.csv")
+
 
 # ===========================================================================
 # RUN
@@ -777,16 +882,26 @@ train_idx, test_idx = train_test_split(
     np.arange(len(y)), test_size=TEST_SIZE, stratify=y, random_state=RANDOM_STATE,
 )
 
-features_df = build_features(df, emb_post, emb_article, emb_title, emb_desc, train_idx, y[train_idx])
+features_df = build_features(
+    df, emb_post, emb_article, emb_title, emb_desc, train_idx, y[train_idx]
+)
 
 # Section 3: Train all models
 results, X_test_scaled, scaler = train_all_models(features_df, y, train_idx, test_idx)
+
+# Ablation study
+run_ablation(features_df, df["truthClass"], train_idx, test_idx)
 
 # Section 4: Comparison table
 best_model_name = print_comparison_table(results)
 
 # Section 5: Error analysis on best model
 cross_entropy = error_analysis(results, best_model_name, features_df, df, test_idx)
+
+# Export error tables
+best_model = results[best_model_name]["clf"]
+y_test = results[best_model_name]["y_test"]
+export_errors(best_model, X_test_scaled, y_test, test_idx, df)
 
 # Section 6: Save
 save_outputs(results, best_model_name, features_df, df, test_idx, cross_entropy)
