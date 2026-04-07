@@ -1,0 +1,85 @@
+Using file: final_clickbait_predictions.csv
+
+======================================================================
+NOT_CLICKBAIT EXAMPLES
+======================================================================
+
+Example 1
+Score: 0.09178755
+truthMean: 0.0
+true_label: 0
+Text: Martin McGuinness, Irish rebel turned politician, dies at 66:
+Title: Martin McGuinness, Irish rebel turned politician, dies at 66
+Why: Score 0.092 is below the low threshold (0.25), so the model is treating this as not clickbait. The annotator consensus score (truthMean) is 0.000.
+
+Example 2
+Score: 0.09298585
+truthMean: 0.0
+true_label: 0
+Text: Barbara Tarbuck, longtime "General Hospital" actress, dead at 74
+Title: Barbara Tarbuck, ÃÂ¢ÃÂÃÂGeneral HospitalÃÂ¢ÃÂÃÂ Actress, Dies at 74
+Why: Score 0.093 is below the low threshold (0.25), so the model is treating this as not clickbait. The annotator consensus score (truthMean) is 0.000.
+
+Example 3
+Score: 0.09653138
+truthMean: 0.2
+true_label: 0
+Text: Nobel laureate, poet and playwright Derek Walcott dead, aged 87
+Title: Nobel laureate, poet and playwright Derek Walcott dead, aged 87
+Why: Score 0.097 is below the low threshold (0.25), so the model is treating this as not clickbait. The annotator consensus score (truthMean) is 0.200.
+
+======================================================================
+AMBIGUOUS EXAMPLES
+======================================================================
+
+Example 1
+Score: 0.42511865
+truthMean: 0.399999999959999
+true_label: 0
+Text: Kraft Heinz needs a deal, but can it really afford Unilever?
+Title: Kraft Heinz Needs a Deal, but Can It Really Afford Unilever?
+Why: Score 0.425 falls between 0.25 and 0.60, so the model abstains and marks it as ambiguous. The annotator consensus score (truthMean) is 0.400.
+
+Example 2
+Score: 0.4255771
+truthMean: 0.26666666664
+true_label: 0
+Text: It's been 26 years since #TheSilenceOfTheLambs first released, but it's still hard not to squirm at its mere mention
+Title: 11 Spine-Chilling Dialogues From 'The Silence Of The Lambs' That Will Give You The Creeps
+Why: Score 0.426 falls between 0.25 and 0.60, so the model abstains and marks it as ambiguous. The annotator consensus score (truthMean) is 0.267.
+
+Example 3
+Score: 0.42438483
+truthMean: 0.73333335
+true_label: 1
+Text: RT @IndyVoices: For one year, my publishing house will only release books written by women ÃÂ¢ÃÂÃÂ here's why
+Title: For one year, my publishing house will only release books written by women ÃÂ¢ÃÂÃÂ here's why
+Why: Score 0.424 falls between 0.25 and 0.60, so the model abstains and marks it as ambiguous. The annotator consensus score (truthMean) is 0.733.
+
+======================================================================
+CLICKBAIT EXAMPLES
+======================================================================
+
+Example 1
+Score: 0.8530855
+truthMean: 0.8666666666599999
+true_label: 1
+Text: Hmmmmm.
+Title: Russian Diplomat AssassinÃÂ¢ÃÂÃÂs Sister Says Police School, Not Gulen, Radicalized Him
+Why: Score 0.853 is above the high threshold (0.60), so the model is treating this as clickbait. The annotator consensus score (truthMean) is 0.867.
+
+Example 2
+Score: 0.8506264
+truthMean: 1.0
+true_label: 1
+Text: Wat.
+Title: Pope Francis: ÃÂ¢ÃÂÃÂMuslim Terrorism Does Not ExistÃÂ¢ÃÂÃÂ
+Why: Score 0.851 is above the high threshold (0.60), so the model is treating this as clickbait. The annotator consensus score (truthMean) is 1.000.
+
+Example 3
+Score: 0.84927475
+truthMean: 1.0
+true_label: 1
+Text: Alas.
+Title: ÃÂ¢ÃÂÃÂLiberal Answer to Breitbart NewsÃÂ¢ÃÂÃÂ Loses CEO Before It Even Launches
+Why: Score 0.849 is above the high threshold (0.60), so the model is treating this as clickbait. The annotator consensus score (truthMean) is 1.000.
