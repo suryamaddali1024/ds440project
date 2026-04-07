@@ -28,8 +28,8 @@ import pandas as pd
 # ===========================================================================
 # CONFIG
 # ===========================================================================
-INPUT_FILE = "merged_with_urls.csv"
-SOURCES_FILE = "tweet_sources.csv"
+INPUT_FILE = "../data/merged_with_urls.csv"
+SOURCES_FILE = "../results/tweet_sources.csv"
 REQUEST_DELAY = 0.3  # seconds between API requests (rate limiting)
 
 

@@ -37,9 +37,9 @@ from sklearn.metrics import (
 # ===========================================================================
 # CONFIG
 # ===========================================================================
-INPUT_FILE = "clickbait_predictions_transformer_v2.csv"
-OUTPUT_FILE_ERRORS = "error_analysis_report.csv"
-OUTPUT_FILE_3CLASS = "three_class_predictions.csv"
+INPUT_FILE = "../results/clickbait_predictions_transformer_v2.csv"
+OUTPUT_FILE_ERRORS = "../results/error_analysis_report.csv"
+OUTPUT_FILE_3CLASS = "../results/three_class_predictions.csv"
 
 
 # ===========================================================================

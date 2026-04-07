@@ -42,8 +42,8 @@ from sklearn.metrics import (
 # ===========================================================================
 # CONFIG
 # ===========================================================================
-INPUT_FILE = "final_cleaned_full.csv"
-OUTPUT_FILE = "clickbait_predictions_transformer_v3.csv"
+INPUT_FILE = "../data/final_cleaned_full.csv"
+OUTPUT_FILE = "../results/clickbait_predictions_transformer_v3.csv"
 MODEL_NAME = "distilbert-base-uncased"
 MAX_LENGTH = 96        # longer since we have two texts now
 BATCH_SIZE = 16

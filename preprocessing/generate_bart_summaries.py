@@ -26,9 +26,9 @@ from tqdm import tqdm
 # ===========================================================================
 # CONFIG — edit these as needed
 # ===========================================================================
-INPUT_FILE = "final_cleaned_full.csv"
-OUTPUT_FILE = "final_cleaned_with_summaries.csv"
-CHECKPOINT_FILE = "bart_checkpoint.csv"
+INPUT_FILE = "../data/final_cleaned_full.csv"
+OUTPUT_FILE = "../data/final_cleaned_with_summaries.csv"
+CHECKPOINT_FILE = "../data/bart_checkpoint.csv"
 SAVE_EVERY = 500          # checkpoint interval (rows)
 RESUME = False            # set to True to resume from checkpoint
 DEVICE = "auto"           # "cuda", "cpu", or "auto"

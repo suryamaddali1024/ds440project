@@ -30,8 +30,8 @@ from tqdm import tqdm
 # ===========================================================================
 # CONFIG
 # ===========================================================================
-INPUT_FILE = "final_cleaned_full.csv"
-OUTPUT_FILE = "clickbait_predictions_lightgbm.csv"
+INPUT_FILE = "../data/final_cleaned_full.csv"
+OUTPUT_FILE = "../results/clickbait_predictions_lightgbm.csv"
 SBERT_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 BATCH_SIZE = 128
 TEST_SIZE = 0.20

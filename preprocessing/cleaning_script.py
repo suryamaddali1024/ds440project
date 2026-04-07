@@ -1,6 +1,6 @@
 import pandas as pd
 
-def clean_and_reorder_dataset(input_file='combined_train.csv', output_file='final_cleaned_full.csv'):
+def clean_and_reorder_dataset(input_file='../data/combined_train.csv', output_file='../data/final_cleaned_full.csv'):
     print(f"1. Loading {input_file}...")
     df = pd.read_csv(input_file)
 

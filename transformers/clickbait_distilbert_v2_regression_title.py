@@ -1,12 +1,9 @@
 """
-clickbait_transformer_v4.py
+clickbait_transformer_v2.py
 ---------------------------
-Fine-tune DistilBERT for clickbait detection with three improvements:
+Fine-tune DistilBERT for clickbait detection with two key improvements:
   1. Regression on truthMean (continuous 0-1 score) instead of binary truthClass
-  2. Triple text input: [postText] [SEP] [targetTitle | targetDescription]
-     Feeds the article's title AND description as context so the model can
-     detect mismatches between the post and the article's own metadata
-  3. MAX_LENGTH=128 to accommodate the longer combined text
+  2. Dual input: [postText] [SEP] [targetTitle] to learn post-vs-title mismatch
 
 Same train/test split (80/20, stratified on truthClass, seed=42) for fair comparison.
 
@@ -42,10 +39,10 @@ from sklearn.metrics import (
 # ===========================================================================
 # CONFIG
 # ===========================================================================
-INPUT_FILE = "final_cleaned_full.csv"
-OUTPUT_FILE = "clickbait_predictions_transformer_v4.csv"
+INPUT_FILE = "../data/final_cleaned_full.csv"
+OUTPUT_FILE = "../results/clickbait_predictions_transformer_v2.csv"
 MODEL_NAME = "distilbert-base-uncased"
-MAX_LENGTH = 128       # longer to fit postText + title + description
+MAX_LENGTH = 96        # longer since we have two texts now
 BATCH_SIZE = 16
 EPOCHS = 4
 LEARNING_RATE = 2e-5
@@ -113,7 +110,6 @@ def load_and_split():
     df["postText_clean"] = df["postText"].apply(parse_text_list)
     df["targetParagraphs_clean"] = df["targetParagraphs"].apply(parse_text_list)
     df["targetTitle_clean"] = df["targetTitle"].apply(parse_text_list)
-    df["targetDescription_clean"] = df["targetDescription"].apply(parse_text_list)
 
     df = df[
         (df["postText_clean"].str.strip() != "")
@@ -121,9 +117,6 @@ def load_and_split():
     ].reset_index(drop=True)
     print(f"   After cleanup: {len(df)} rows")
     print(f"   Binary class distribution: {df['truthClass'].value_counts().to_dict()}")
-
-    n_desc = (df["targetDescription_clean"].str.strip() != "").sum()
-    print(f"   targetDescription coverage: {n_desc}/{len(df)} ({100*n_desc/len(df):.1f}%)")
 
     # truthMean stats
     print(f"   truthMean stats: mean={df['truthMean'].mean():.3f}  "
@@ -133,19 +126,8 @@ def load_and_split():
 
     post_texts = df["postText_clean"].tolist()
     title_texts = df["targetTitle_clean"].tolist()
-    desc_texts = df["targetDescription_clean"].tolist()
-    # Fill empty titles/descriptions with placeholder
+    # Fill empty titles with placeholder
     title_texts = [t if t.strip() else "no title" for t in title_texts]
-    desc_texts = [d if d.strip() else "" for d in desc_texts]
-    # Combine title + description as the second segment
-    # Format: "title | description" (or just "title" if no description)
-    context_texts = []
-    for t, d in zip(title_texts, desc_texts):
-        if d:
-            context_texts.append(f"{t} | {d}")
-        else:
-            context_texts.append(t)
-    print(f"   Input format: [postText] [SEP] [targetTitle | targetDescription]")
 
     scores = df["truthMean"].values          # continuous target for training
     binary_labels = df["truthClass"].values  # binary target for evaluation/stratification
@@ -170,7 +152,7 @@ def load_and_split():
         return [lst[i] for i in idxs]
 
     train_posts, val_posts, test_posts = gather(post_texts, train_idx), gather(post_texts, val_idx), gather(post_texts, test_idx)
-    train_contexts, val_contexts, test_contexts = gather(context_texts, train_idx), gather(context_texts, val_idx), gather(context_texts, test_idx)
+    train_titles, val_titles, test_titles = gather(title_texts, train_idx), gather(title_texts, val_idx), gather(title_texts, test_idx)
     train_scores, val_scores, test_scores = scores[train_idx], scores[val_idx], scores[test_idx]
     test_binary = binary_labels[test_idx]
 
@@ -182,7 +164,7 @@ def load_and_split():
 
     return (df,
             train_posts, val_posts, test_posts,
-            train_contexts, val_contexts, test_contexts,
+            train_titles, val_titles, test_titles,
             train_scores, val_scores, test_scores,
             test_binary, test_idx)
 
@@ -203,7 +185,7 @@ def setup_model_and_tokenizer():
     print(f"   Device: {device}")
     print(f"   Model: {MODEL_NAME}")
     print(f"   Task: Regression on truthMean (continuous 0-1)")
-    print(f"   Input: [postText] [SEP] [targetTitle | targetDescription]")
+    print(f"   Input: [postText] [SEP] [targetTitle]")
 
     tokenizer = DistilBertTokenizer.from_pretrained(MODEL_NAME)
 
@@ -226,7 +208,7 @@ def setup_model_and_tokenizer():
 # ===========================================================================
 
 def train_model(model, tokenizer, device,
-                train_posts, val_posts, train_contexts, val_contexts,
+                train_posts, val_posts, train_titles, val_titles,
                 train_scores, val_scores):
     """Fine-tune DistilBERT with MSE loss on truthMean."""
     from torch.optim import AdamW
@@ -241,11 +223,11 @@ def train_model(model, tokenizer, device,
     # Create datasets
     print("   Tokenizing train set...")
     train_dataset = ClickbaitRegressionDataset(
-        train_posts, train_contexts, train_scores, tokenizer, MAX_LENGTH,
+        train_posts, train_titles, train_scores, tokenizer, MAX_LENGTH,
     )
     print("   Tokenizing val set...")
     val_dataset = ClickbaitRegressionDataset(
-        val_posts, val_contexts, val_scores, tokenizer, MAX_LENGTH,
+        val_posts, val_titles, val_scores, tokenizer, MAX_LENGTH,
     )
 
     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
@@ -343,7 +325,7 @@ def train_model(model, tokenizer, device,
 # ===========================================================================
 
 def evaluate_model(model, tokenizer, device,
-                   test_posts, test_contexts, test_scores, test_binary):
+                   test_posts, test_titles, test_scores, test_binary):
     """Evaluate: predict truthMean, then threshold for binary classification."""
     print("\n" + "=" * 70)
     print("SECTION 4: EVALUATION")
@@ -351,7 +333,7 @@ def evaluate_model(model, tokenizer, device,
 
     print("   Tokenizing test set...")
     test_dataset = ClickbaitRegressionDataset(
-        test_posts, test_contexts, test_scores, tokenizer, MAX_LENGTH,
+        test_posts, test_titles, test_scores, tokenizer, MAX_LENGTH,
     )
     test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False)
 
@@ -436,28 +418,27 @@ def print_comparison(f1, acc, prec, rec):
     print("=" * 70)
 
     prior = {
-        "LightGBM (26 feat)":        {"f1": 0.6263, "acc": 0.8037, "prec": 0.5979, "rec": 0.6575},
-        "DistilBERT v1 (postOnly)":  {"f1": 0.6967, "acc": 0.8533, "prec": 0.7215, "rec": 0.6735},
-        "DistilBERT v2 (reg+title)": {"f1": 0.7082, "acc": 0.8378, "prec": 0.6439, "rec": 0.7869},
-        "Ensemble (v2+LightGBM)":    {"f1": 0.7109, "acc": 0.8412, "prec": 0.6529, "rec": 0.7801},
+        "Logistic Reg (L1)":       {"f1": 0.6222, "acc": 0.8019, "prec": 0.5952, "rec": 0.6518},
+        "LightGBM (26 feat)":      {"f1": 0.6263, "acc": 0.8037, "prec": 0.5979, "rec": 0.6575},
+        "DistilBERT v1 (postOnly)":{"f1": 0.6967, "acc": 0.8533, "prec": 0.7215, "rec": 0.6735},
     }
 
-    header = f"   {'Model':35s}  {'F1':>7s}  {'Acc':>7s}  {'Prec':>7s}  {'Recall':>7s}"
+    header = f"   {'Model':30s}  {'F1':>7s}  {'Acc':>7s}  {'Prec':>7s}  {'Recall':>7s}"
     print(header)
-    print(f"   {'-'*35}  {'-'*7}  {'-'*7}  {'-'*7}  {'-'*7}")
+    print(f"   {'-'*30}  {'-'*7}  {'-'*7}  {'-'*7}  {'-'*7}")
 
     for name, r in prior.items():
-        print(f"   {name:35s}  {r['f1']:7.4f}  {r['acc']:7.4f}  {r['prec']:7.4f}  {r['rec']:7.4f}")
+        print(f"   {name:30s}  {r['f1']:7.4f}  {r['acc']:7.4f}  {r['prec']:7.4f}  {r['rec']:7.4f}")
 
-    print(f"   {'-'*35}  {'-'*7}  {'-'*7}  {'-'*7}  {'-'*7}")
-    print(f"   {'DistilBERT v4 (reg+title+desc)':35s}  {f1:7.4f}  {acc:7.4f}  {prec:7.4f}  {rec:7.4f}")
+    print(f"   {'-'*30}  {'-'*7}  {'-'*7}  {'-'*7}  {'-'*7}")
+    print(f"   {'DistilBERT v2 (reg+title)':30s}  {f1:7.4f}  {acc:7.4f}  {prec:7.4f}  {rec:7.4f}")
 
-    best_prior = 0.7109  # Ensemble
+    best_prior = 0.6967  # v1 DistilBERT
     diff = f1 - best_prior
     if diff > 0:
-        print(f"\n   >>> v4 beats best prior (Ensemble) by +{diff:.4f} F1")
+        print(f"\n   >>> v2 beats v1 by +{diff:.4f} F1")
     else:
-        print(f"\n   >>> v4 is {diff:+.4f} F1 vs best prior (Ensemble)")
+        print(f"\n   >>> v2 is {diff:+.4f} F1 vs v1")
 
 
 # ===========================================================================
@@ -538,7 +519,7 @@ def error_analysis(df, test_idx, y_pred, pred_scores, test_binary):
 # Section 1
 (df,
  train_posts, val_posts, test_posts,
- train_contexts, val_contexts, test_contexts,
+ train_titles, val_titles, test_titles,
  train_scores, val_scores, test_scores,
  test_binary, test_idx) = load_and_split()
 
@@ -547,14 +528,14 @@ model, tokenizer, device = setup_model_and_tokenizer()
 
 # Section 3
 model = train_model(model, tokenizer, device,
-                    train_posts, val_posts, train_contexts, val_contexts,
+                    train_posts, val_posts, train_titles, val_titles,
                     train_scores, val_scores)
 
 # Section 4
 (y_pred, pred_scores, test_binary_out, threshold,
  f1, acc, prec, rec) = evaluate_model(
     model, tokenizer, device,
-    test_posts, test_contexts, test_scores, test_binary,
+    test_posts, test_titles, test_scores, test_binary,
 )
 
 # Section 5
