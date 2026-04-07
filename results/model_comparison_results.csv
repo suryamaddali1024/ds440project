@@ -1,13 +1,17 @@
-Model,CV_F1,Test_F1,Accuracy,Precision,Recall,Threshold
-Logistic Regression (L1),0.6000,0.6222,0.8019,0.5952,0.6518,0.5458
-Logistic Regression (L2),0.6003,0.6186,0.7999,0.5914,0.6483,0.5426
-Elastic Net,0.6002,0.6208,0.8008,0.5927,0.6518,0.5436
-Linear SVC,0.6066,0.6201,0.7942,0.5762,0.6712,0.2663
-Random Forest,0.5984,0.6080,0.7638,0.5199,0.7320,0.4236
-XGBoost,0.6150,0.6262,0.7951,0.5760,0.6861,0.4986
-LightGBM,0.6150,0.6263,0.8037,0.5979,0.6575,0.5249
-DistilBERT v1 (postText only),N/A,0.6967,0.8533,0.7215,0.6735,0.6237
-DistilBERT v2 (regression+title),N/A,0.7082,0.8378,0.6439,0.7869,0.3736
-DistilBERT v3 (filtered train),N/A,0.7014,0.8458,0.6803,0.7239,0.3352
-Ensemble (0.9*v2 + 0.1*LightGBM),N/A,0.7109,0.8412,0.6529,0.7801,0.3859
-DistilBERT v4 (reg+title+desc),N/A,0.7094,0.8492,0.6852,0.7354,0.4185
+Model,CV_F1,Test_F1,Accuracy,Precision,Recall,Threshold,Pct_Confident,Notes
+Logistic Regression (L1),0.6000,0.6222,0.8019,0.5952,0.6518,0.5458,100%,binary
+Logistic Regression (L2),0.6003,0.6186,0.7999,0.5914,0.6483,0.5426,100%,binary
+Elastic Net,0.6002,0.6208,0.8008,0.5927,0.6518,0.5436,100%,binary
+Linear SVC,0.6066,0.6201,0.7942,0.5762,0.6712,0.2663,100%,binary
+Random Forest,0.5984,0.6080,0.7638,0.5199,0.7320,0.4236,100%,binary
+XGBoost,0.6150,0.6262,0.7951,0.5760,0.6861,0.4986,100%,binary
+LightGBM,0.6150,0.6263,0.8037,0.5979,0.6575,0.5249,100%,binary
+DistilBERT v1 (postText only),N/A,0.6967,0.8533,0.7215,0.6735,0.6237,100%,binary
+DistilBERT v2 (regression+title),N/A,0.7082,0.8378,0.6439,0.7869,0.3736,100%,binary - best single model
+DistilBERT v3 (filtered train),N/A,0.7014,0.8458,0.6803,0.7239,0.3352,100%,binary
+Ensemble (0.9*v2 + 0.1*LightGBM),N/A,0.7109,0.8412,0.6529,0.7801,0.3859,100%,binary - best binary overall
+DistilBERT v4 (reg+title+desc),N/A,0.7094,0.8492,0.6852,0.7354,0.4185,100%,binary
+DistilBERT v5 (trained 3-class),N/A,0.7966,0.9275,0.8338,0.7627,N/A,66.8%,3-class confident only
+v2 binned (post-hoc 0.25/0.60),N/A,0.8376,0.9369,0.8318,0.8435,0.25/0.60,63.6%,3-class confident only
+v2 + Platt scaling (0.05/0.85),N/A,0.9255,0.9653,0.8817,0.9739,0.05/0.85,19.8%,3-class calibrated
+v2 + Isotonic regression (0.05/0.75),N/A,0.8751,0.9390,0.8286,0.9272,0.05/0.75,51.2%,3-class calibrated - best overall
