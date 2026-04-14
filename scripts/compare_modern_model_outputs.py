@@ -1,7 +1,7 @@
 import pandas as pd
 
-rob = pd.read_csv("roberta_predictions.csv")
-dis = pd.read_csv("distilbert_3class_predictions.csv")
+rob = pd.read_csv("results/roberta_predictions.csv")
+dis = pd.read_csv("results/distilbert_3class_predictions.csv")
 
 merged = rob.merge(dis, on="ID")
 

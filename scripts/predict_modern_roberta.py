@@ -2,7 +2,7 @@ import pandas as pd
 import torch
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
-INPUT_FILE = "modern_headlines.csv"
+INPUT_FILE = "DS440 recent headlines.csv"
 OUTPUT_FILE = "roberta_predictions.csv"
 MODEL_PATH = "models/roberta_clickbait"
 
