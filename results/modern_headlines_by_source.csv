@@ -1,0 +1,6 @@
+source,total,not_clickbait,ambiguous,clickbait,clickbait_pct
+BBC,40,19,21,0,0.0
+Fox News,25,20,5,0,0.0
+NPR,10,8,2,0,0.0
+The Verge,10,4,6,0,0.0
+BuzzFeed,49,0,19,30,61.2
