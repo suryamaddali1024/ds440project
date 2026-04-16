@@ -51,8 +51,8 @@ from torch.utils.data import Dataset, DataLoader
 # ===========================================================================
 # CONFIG
 # ===========================================================================
-TRAINING_DATA = "../data/final_cleaned_full.csv"
-MODEL_DIR = "../models/distilbert_v2_saved"
+TRAINING_DATA = "data/final_cleaned_full.csv"
+MODEL_DIR = "models/distilbert_3class_clickbait"
 MODEL_NAME = "distilbert-base-uncased"
 MAX_LENGTH = 96
 BATCH_SIZE = 16
@@ -314,28 +314,52 @@ def classify_headlines(model, tokenizer, device, texts, titles=None):
     loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=False)
 
     all_scores = []
+    labels = []
+
     model.eval()
     with torch.no_grad():
         for batch in loader:
             input_ids = batch["input_ids"].to(device)
             attention_mask = batch["attention_mask"].to(device)
             outputs = model(input_ids=input_ids, attention_mask=attention_mask)
-            scores = torch.sigmoid(outputs.logits.squeeze(-1))
-            all_scores.extend(scores.cpu().numpy())
 
-    scores = np.array(all_scores)
+            logits = outputs.logits
 
-    # Apply three-class thresholds
-    labels = []
-    for s in scores:
-        if s < THRESHOLD_LOW:
-            labels.append("not_clickbait")
-        elif s >= THRESHOLD_HIGH:
-            labels.append("clickbait")
-        else:
-            labels.append("ambiguous")
+            # Original behavior: single-score / regression-style model
+            if logits.ndim == 1 or logits.shape[-1] == 1:
+                scores = torch.sigmoid(logits.squeeze(-1)).cpu().numpy()
 
-    return scores, labels
+                for s in scores:
+                    all_scores.append(float(s))
+
+                    if s < THRESHOLD_LOW:
+                        labels.append("not_clickbait")
+                    elif s >= THRESHOLD_HIGH:
+                        labels.append("clickbait")
+                    else:
+                        labels.append("ambiguous")
+
+            # Added support: 3-class classifier model
+            elif logits.shape[-1] == 3:
+                probs = torch.softmax(logits, dim=1).cpu().numpy()
+
+                for p in probs:
+                    class_idx = int(np.argmax(p))
+                    all_scores.append(float(np.max(p)))
+
+                    if class_idx == 0:
+                        labels.append("not_clickbait")
+                    elif class_idx == 1:
+                        labels.append("ambiguous")
+                    else:
+                        labels.append("clickbait")
+    
+
+            else:
+                    raise ValueError(f"Unsupported model output shape: {tuple(logits.shape)}")
+
+    return np.array(all_scores), labels
+
 
 
 # ===========================================================================
