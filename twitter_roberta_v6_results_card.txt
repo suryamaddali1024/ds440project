@@ -1,0 +1,24 @@
+
+╔══════════════════════════════════════════════════════════════════════════╗
+║  Twitter-RoBERTa FUSED 3-CLASS PIPELINE — FINAL RESULTS CARD        ║
+╠══════════════════════════════════════════════════════════════════════════╣
+║                                                                          ║
+║  Task         : 3-class (not_clickbait / ambiguous / clickbait)         ║
+║  Model        : cardiffnlp/twitter-roberta-base                ║
+║                                                                          ║
+║  Test-Set Results (calibrated):                                          ║
+║    3-class macro F1  : 0.6663                                         ║
+║    3-class accuracy  : 0.7043                                         ║
+║    Confident-only F1 : 0.8320                                         ║
+║    Confident-only Acc: 0.9356                                         ║
+║                                                                          ║
+║  Innovation Axes Applied:                                                ║
+║    1. Twitter-RoBERTa tweet-domain pre-training (58M tweets)         ║
+║    2. Intermediate fusion at encoder layer 6                       ║
+║    3. Layer-wise LR decay (factor=0.85)                           ║
+║    4. Multi-task: FocalCE(γ=2.0) + MSE + LabelSmooth(ε=0.05)     ║
+║    5. Augmentation: title-drop(0.15) + word-swap + span-corrupt  ║
+║    +  SWA (from epoch 4) + Temperature Scaling (T=0.920)           ║
+║                                                                          ║
+║  vs DistilBERT-v5 baseline (0.7082): -0.0419                          ║
+╚══════════════════════════════════════════════════════════════════════════╝
