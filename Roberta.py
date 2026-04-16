@@ -22,6 +22,7 @@ Usage (Colab):
 """
 
 import ast
+import os
 import random
 
 import numpy as np
@@ -40,9 +41,10 @@ from sklearn.metrics import (
 INPUT_FILE = "final_cleaned_full.csv"
 OUTPUT_FILE = "clickbait_predictions_transformer.csv"
 MODEL_NAME = "roberta-base"
+MODEL_OUTPUT_DIR = "models/roberta_clickbait"
 MAX_LENGTH = 64        # post titles are short, 64 tokens is plenty
 BATCH_SIZE = 16
-EPOCHS = 4
+EPOCHS = 2
 LEARNING_RATE = 2e-5
 WARMUP_RATIO = 0.1
 TEST_SIZE = 0.20
@@ -438,10 +440,16 @@ def print_comparison(f1, acc, prec, rec):
 # SECTION 6: ERROR ANALYSIS
 # ===========================================================================
 
-def error_analysis(df, test_idx, y_pred, probs, test_labels):
+def error_analysis(df, test_idx, y_pred, probs, test_labels_out):
     """Error analysis on transformer predictions."""
+    # Section 7: Save trained model + tokenizer
+    os.makedirs(MODEL_OUTPUT_DIR, exist_ok=True)
+    model.save_pretrained(MODEL_OUTPUT_DIR)
+    tokenizer.save_pretrained(MODEL_OUTPUT_DIR)
+    print(f"\nSaved trained model and tokenizer to {MODEL_OUTPUT_DIR}")
+
     print("\n" + "=" * 70)
-    print("SECTION 6: ERROR ANALYSIS")
+    print("DONE!")
     print("=" * 70)
 
     # Per-sample cross-entropy

@@ -30,6 +30,7 @@ Usage:
 """
 
 import ast
+import os
 import random
 
 import numpy as np
@@ -46,12 +47,13 @@ from sklearn.metrics import (
 # ===========================================================================
 # CONFIG
 # ===========================================================================
-INPUT_FILE = "../data/final_cleaned_full.csv"
-OUTPUT_FILE = "../results/clickbait_predictions_3class.csv"
+INPUT_FILE = "final_cleaned_full.csv"
+OUTPUT_FILE = "results/clickbait_predictions_3class.csv"
 MODEL_NAME = "distilbert-base-uncased"
+MODEL_OUTPUT_DIR = "models/distilbert_3class_clickbait"
 MAX_LENGTH = 96
 BATCH_SIZE = 16
-EPOCHS = 4
+EPOCHS = 2
 LEARNING_RATE = 2e-5
 WARMUP_RATIO = 0.1
 TEST_SIZE = 0.20
@@ -465,8 +467,15 @@ def print_comparison(f1_macro, acc_3class, f1_conf, acc_conf):
 
 def error_analysis(df, test_idx, pred_3class, pred_probs, test_labels, test_binary):
     """Analyze what the 3-class model gets right and wrong."""
+    # Section 7: Save trained model + tokenizer
+    os.makedirs(MODEL_OUTPUT_DIR, exist_ok=True)
+    model.save_pretrained(MODEL_OUTPUT_DIR)
+    tokenizer.save_pretrained(MODEL_OUTPUT_DIR)
+
+    print(f"\nSaved trained model and tokenizer to {MODEL_OUTPUT_DIR}")
+
     print("\n" + "=" * 70)
-    print("SECTION 6: ERROR ANALYSIS")
+    print("DONE!")
     print("=" * 70)
 
     truth_mean = df.iloc[test_idx]["truthMean"].values

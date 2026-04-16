@@ -1,7 +1,7 @@
 import pandas as pd
 
 # Your dataset
-sanjana = pd.read_csv("DS440 recent headlines.csv")
+sanjana = pd.read_csv("data/recent headlines.csv")
 sanjana_clean = pd.DataFrame({
     "source": sanjana["postText_clean"],
     "headline": sanjana["targetTitle_clean"],
@@ -22,9 +22,6 @@ surya_clean = pd.DataFrame({
     "published": surya["published"]
 })
 
-# Optional: track origin
-sanjana_clean["dataset"] = "sanjana"
-surya_clean["dataset"] = "surya"
 
 # Combine
 combined = pd.concat([sanjana_clean, surya_clean], ignore_index=True)
